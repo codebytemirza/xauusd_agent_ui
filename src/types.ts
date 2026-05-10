@@ -5,43 +5,28 @@ export interface Candle {
   low: number;
   close: number;
   tick_volume?: number;
+  volume?: number;
   spread?: number;
-  real_volume?: number;
 }
 
+// POI types from SMC: bullish_ob, bearish_ob, bullish_fvg, bearish_fvg, bullish_2cb, bearish_2cb
 export interface POI {
   type: string;
   zone_low: number;
   zone_high: number;
-  c1_time: string;
+  c1_time?: string;
+  c3_time?: string;
+  c2_time?: string;
   status: "active" | "partially_mitigated" | "fully_mitigated";
 }
 
+// BOS/CHoCH from SMC bos_choch — no swing_index anymore
 export interface Breakout {
-  type: string;
+  type: "bullish_break" | "bearish_break" | string;
   swing_price?: number;
-  swing_time?: string;
-  swing_index?: number;
   break_index?: number;
   break_time?: string;
   break_close?: number;
-  break_price?: number; // legacy
-  break_candle_time?: string; // legacy
-  direction?: "bullish" | "bearish"; // legacy
-}
-
-export interface Sweep {
-  type: string;
-  swing_price?: number;
-  swing_time?: string;
-  sweep_start_index?: number;
-  sweep_start_time?: string;
-  sweep_candle_count?: number;
-  wick_high?: number;
-  wick_low?: number;
-  swept_price?: number; // legacy
-  sweep_candle_time?: string; // legacy
-  direction?: "bullish" | "bearish"; // legacy
 }
 
 export interface Swing {
@@ -54,7 +39,7 @@ export interface AnalysisResponse {
   candle_count: number;
   swing_highs: Swing[];
   swing_lows: Swing[];
-  sweeps: Sweep[];
+  sweeps: never[];           // always empty — SMC handles internally
   breakouts: Breakout[];
   pois: POI[];
   summary: {

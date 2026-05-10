@@ -18,6 +18,16 @@ interface ChartPanelProps {
   analysis: AnalysisResponse | null;
 }
 
+// Map POI type → [fillColor, borderColor]
+const POI_COLORS: Record<string, [string, string]> = {
+  bullish_ob:  ["#0a2e1a", "#00CC88"],
+  bearish_ob:  ["#2e0a0a", "#FF4444"],
+  bullish_fvg: ["#0a1f2e", "#22aaff"],
+  bearish_fvg: ["#2e1a00", "#ff8800"],
+  bullish_2cb: ["#0a2218", "#00e5a0"],
+  bearish_2cb: ["#2a0a1a", "#ff3377"],
+};
+
 export function ChartPanel({ candles, analysis }: ChartPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -90,7 +100,7 @@ export function ChartPanel({ candles, analysis }: ChartPanelProps) {
     }
   }, [candles]);
 
-  // Update overlays when analysis changes
+  // Update overlays when analysis changes — now fully driven by SMC backend data
   useEffect(() => {
     if (!seriesRef.current || !chartRef.current) return;
 
@@ -107,197 +117,96 @@ export function ChartPanel({ candles, analysis }: ChartPanelProps) {
 
     const markers: any[] = [];
 
-    // Swings Filtering
-    const filteredSwings: any[] = [];
-    const len = candles.length;
-    for (let i = 5; i < len - 3; i++) {
-      const c = candles[i];
-
-      // Swing High
-      let isSH = true;
-      for (let j = i - 5; j <= i + 3; j++) {
-        if (i !== j && candles[j].high >= c.high) isSH = false;
-      }
-      if (isSH)
-        filteredSwings.push({
-          type: "SH",
-          time: c.time,
-          price: c.high,
-          index: i,
-        });
-
-      // Swing Low
-      let isSL = true;
-      for (let j = i - 5; j <= i + 3; j++) {
-        if (i !== j && candles[j].low <= c.low) isSL = false;
-      }
-      if (isSL)
-        filteredSwings.push({
-          type: "SL",
-          time: c.time,
-          price: c.low,
-          index: i,
-        });
-    }
-
-    filteredSwings.sort((a, b) => a.index - b.index);
-    const dedupedSH: any[] = [];
-    filteredSwings
-      .filter((s) => s.type === "SH")
-      .forEach((sh) => {
-        if (dedupedSH.length > 0) {
-          const prev = dedupedSH[dedupedSH.length - 1];
-          if (sh.index - prev.index <= 5) {
-            if (sh.price > prev.price) dedupedSH[dedupedSH.length - 1] = sh;
-            return;
-          }
-        }
-        dedupedSH.push(sh);
-      });
-
-    const dedupedSL: any[] = [];
-    filteredSwings
-      .filter((s) => s.type === "SL")
-      .forEach((sl) => {
-        if (dedupedSL.length > 0) {
-          const prev = dedupedSL[dedupedSL.length - 1];
-          if (sl.index - prev.index <= 5) {
-            if (sl.price < prev.price) dedupedSL[dedupedSL.length - 1] = sl;
-            return;
-          }
-        }
-        dedupedSL.push(sl);
-      });
-
-    const combinedSwings = [...dedupedSH, ...dedupedSL].sort(
-      (a, b) => a.index - b.index,
-    );
-    combinedSwings.forEach((s) => {
+    // ── 1. Swing High / Low markers from backend ──────────────────────────────
+    analysis.swing_highs.forEach((sh) => {
       markers.push({
-        time: toUnixTime(s.time),
-        position: s.type === "SH" ? "aboveBar" : "belowBar",
-        color: s.type === "SH" ? "#FF4444" : "#00CC88",
-        shape: s.type === "SH" ? "arrowDown" : "arrowUp",
-        text: s.type,
+        time: toUnixTime(sh.time),
+        position: "aboveBar",
+        color: "#FF4444",
+        shape: "arrowDown",
+        text: "SH",
+        size: 1,
+      });
+    });
+    analysis.swing_lows.forEach((sl) => {
+      markers.push({
+        time: toUnixTime(sl.time),
+        position: "belowBar",
+        color: "#00CC88",
+        shape: "arrowUp",
+        text: "SL",
         size: 1,
       });
     });
 
-    // POIs (Order Blocks)
-    const avgCandleRange =
-      candles.reduce((acc, c) => acc + (c.high - c.low), 0) /
-      (candles.length || 1);
-    const allOBs: any[] = [];
-
-    for (let i = 2; i < candles.length - 2; i++) {
-      // Bullish impulse over 1 or 2 candles
-      const impulseUp =
-        candles[i].close -
-          candles[i].open +
-          (candles[i + 1]?.close - candles[i + 1]?.open) >
-        1.5 * avgCandleRange;
-      if (impulseUp && candles[i].close > candles[i].open) {
-        let obIndex = -1;
-        for (let j = i - 1; j >= Math.max(0, i - 10); j--) {
-          if (candles[j].close < candles[j].open) {
-            obIndex = j;
-            break;
-          }
-        }
-        if (obIndex !== -1 && !allOBs.some((ob) => ob.startIndex === obIndex)) {
-          allOBs.push({
-            isBullish: true,
-            startIndex: obIndex,
-            zone_high: candles[obIndex].high,
-            zone_low: candles[obIndex].low,
-          });
-        }
-      }
-
-      // Bearish impulse over 1 or 2 candles
-      const impulseDown =
-        candles[i].open -
-          candles[i].close +
-          (candles[i + 1]?.open - candles[i + 1]?.close) >
-        1.5 * avgCandleRange;
-      if (impulseDown && candles[i].close < candles[i].open) {
-        let obIndex = -1;
-        for (let j = i - 1; j >= Math.max(0, i - 10); j--) {
-          if (candles[j].close > candles[j].open) {
-            obIndex = j;
-            break;
-          }
-        }
-        if (obIndex !== -1 && !allOBs.some((ob) => ob.startIndex === obIndex)) {
-          allOBs.push({
-            isBullish: false,
-            startIndex: obIndex,
-            zone_high: candles[obIndex].high,
-            zone_low: candles[obIndex].low,
-          });
-        }
-      }
-    }
-
-    const processedOBs: any[] = [];
-
-    allOBs.forEach((ob) => {
-      let isMitigated = false;
-      let mitigatedIndex = ob.startIndex;
-
-      for (let i = ob.startIndex + 1; i < candles.length; i++) {
-        const c = candles[i];
-        if (ob.isBullish && c.close < ob.zone_low) {
-          isMitigated = true;
-          mitigatedIndex = i;
-          break;
-        } else if (!ob.isBullish && c.close > ob.zone_high) {
-          isMitigated = true;
-          mitigatedIndex = i;
-          break;
-        }
-      }
-
-      if (isMitigated && candles.length - 1 - mitigatedIndex > 20) {
-        return;
-      }
-
-      let endIndex = isMitigated ? mitigatedIndex : candles.length - 1;
-      processedOBs.push({ ...ob, endIndex, isMitigated });
+    // ── 2. BOS / CHoCH lines from backend breakouts ──────────────────────────
+    analysis.breakouts.forEach((br) => {
+      if (!br.break_time || !br.swing_price) return;
+      const isBullish = br.type === "bullish_break";
+      markers.push({
+        time: toUnixTime(br.break_time),
+        position: isBullish ? "belowBar" : "aboveBar",
+        color: isBullish ? "#6366f1" : "#ec4899",
+        shape: "circle",
+        text: "BOS",
+        size: 0.5,
+      });
     });
 
-    const activeBullish = processedOBs
-      .filter((ob) => ob.isBullish && !ob.isMitigated)
-      .slice(-3); // max 3
-    const activeBearish = processedOBs
-      .filter((ob) => !ob.isBullish && !ob.isMitigated)
-      .slice(-3); // max 3
-    const mitigatedToKeep = processedOBs.filter((ob) => ob.isMitigated);
+    // ── 3. POI Boxes from SMC backend — only active ones ─────────────────────
+    const lastCandleTime = candles.length > 0
+      ? toUnixTime(candles[candles.length - 1].time)
+      : 0;
 
-    let finalOBs = [...activeBullish, ...activeBearish, ...mitigatedToKeep];
+    const activePois = analysis.pois.filter((p) => p.status === "active");
 
-    if (finalOBs.length === 0 && processedOBs.length > 0) {
-      finalOBs = processedOBs.slice(-2);
-    }
+    activePois.forEach((poi) => {
+      const [fillColor, borderColor] = POI_COLORS[poi.type] ?? ["#1a1a2e", "#888888"];
 
-    finalOBs.forEach((ob) => {
-      let color = ob.isBullish ? "#1a472a" : "#4a1a1a";
-      let borderColor = ob.isBullish ? "#00CC88" : "#FF4444";
-      let opacity = ob.isMitigated ? 0.15 : 0.55;
+      // Determine start time from c1_time
+      const startTime = poi.c1_time
+        ? toUnixTime(poi.c1_time)
+        : null;
 
-      if (seriesRef.current?.attachPrimitive) {
-        const box = new BoxPrimitive({
-          time1: toUnixTime(candles[ob.startIndex].time),
-          time2: toUnixTime(candles[ob.endIndex].time),
-          price1: ob.zone_low,
-          price2: ob.zone_high,
-          color,
-          borderColor,
-          opacity,
-        });
-        seriesRef.current.attachPrimitive(box);
-        primitivesRef.current.push(box);
-      }
+      if (!startTime || !seriesRef.current?.attachPrimitive) return;
+
+      const box = new BoxPrimitive({
+        time1: startTime,
+        time2: lastCandleTime,   // extend box to current price action
+        price1: poi.zone_low,
+        price2: poi.zone_high,
+        color: fillColor,
+        borderColor,
+        opacity: 0.55,
+      });
+
+      seriesRef.current.attachPrimitive(box);
+      primitivesRef.current.push(box);
+    });
+
+    // Also draw recently mitigated POIs with low opacity (last 3 only)
+    const mitigatedPois = analysis.pois
+      .filter((p) => p.status === "fully_mitigated")
+      .slice(-3);
+
+    mitigatedPois.forEach((poi) => {
+      const [fillColor, borderColor] = POI_COLORS[poi.type] ?? ["#1a1a2e", "#888888"];
+      const startTime = poi.c1_time ? toUnixTime(poi.c1_time) : null;
+      const endTime = poi.c3_time ?? poi.c2_time;
+
+      if (!startTime || !endTime || !seriesRef.current?.attachPrimitive) return;
+
+      const box = new BoxPrimitive({
+        time1: startTime,
+        time2: toUnixTime(endTime),
+        price1: poi.zone_low,
+        price2: poi.zone_high,
+        color: fillColor,
+        borderColor,
+        opacity: 0.15,
+      });
+      seriesRef.current.attachPrimitive(box);
+      primitivesRef.current.push(box);
     });
 
     // Sort markers by time as required by lightweight-charts
@@ -324,15 +233,14 @@ export function ChartPanel({ candles, analysis }: ChartPanelProps) {
             ? `${new Date(candles[0].time).toLocaleDateString()} — ${new Date(candles[candles.length - 1].time).toLocaleDateString()}`
             : "NO DATA"}
         </div>
-        <div className="flex space-x-4 text-[10px] font-mono">
+        <div className="flex space-x-3 text-[10px] font-mono items-center">
           <span className="text-[#FF4444]">▼ SH</span>
           <span className="text-[#00CC88]">▲ SL</span>
-          <span className="text-[#00CC88] border-y border-[#00CC88] px-1 bg-[#1a472a]">
-            BULL OB
-          </span>
-          <span className="text-[#FF4444] border-y border-[#FF4444] px-1 bg-[#4a1a1a]">
-            BEAR OB
-          </span>
+          <span className="text-[#00CC88] border border-[#00CC88] px-1 bg-[#0a2e1a]">BULL OB</span>
+          <span className="text-[#FF4444] border border-[#FF4444] px-1 bg-[#2e0a0a]">BEAR OB</span>
+          <span className="text-[#22aaff] border border-[#22aaff] px-1 bg-[#0a1f2e]">FVG</span>
+          <span className="text-[#00e5a0] border border-[#00e5a0] px-1 bg-[#0a2218]">2CB</span>
+          <span className="text-[#6366f1]">● BOS</span>
         </div>
       </div>
     </div>
